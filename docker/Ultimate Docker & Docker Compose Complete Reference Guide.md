@@ -1875,11 +1875,10 @@ services:
 
 ---
 
-## Complete Examples
 
-### Full-Stack Application (MEAN Stack)
+## Full-Stack Application (MEAN Stack)
 
-#### Project Structure
+### Project Structure
 ```
 project/
 ├── docker-compose.yml
@@ -1899,7 +1898,7 @@ project/
     └── nginx.conf
 ```
 
-#### Frontend Dockerfile (Angular)
+### Frontend Dockerfile (Angular)
 ```dockerfile
 # frontend/Dockerfile
 FROM node:18-alpine AS build
@@ -1919,7 +1918,7 @@ EXPOSE 80
 CMD ["nginx", "-g", "daemon off;"]
 ```
 
-#### Backend Dockerfile (Node.js)
+### Backend Dockerfile (Node.js)
 ```dockerfile
 # backend/Dockerfile
 FROM node:18-alpine AS dependencies
@@ -1953,7 +1952,7 @@ HEALTHCHECK --interval=30s --timeout=3s --retries=3 \
 CMD ["npm", "start"]
 ```
 
-#### Complete Docker Compose
+### Complete Docker Compose
 ```yaml
 # docker-compose.yml
 version: '3.8'
@@ -2069,7 +2068,7 @@ volumes:
     driver: local
 ```
 
-#### Development Override
+### Development Override
 ```yaml
 # docker-compose.override.yml
 version: '3.8'
@@ -2104,7 +2103,7 @@ services:
       - "6379:6379"
 ```
 
-#### Production Configuration
+### Production Configuration
 ```yaml
 # docker-compose.prod.yml
 version: '3.8'
@@ -2153,9 +2152,9 @@ services:
           cpus: '0.25'
 ```
 
-### Microservices Architecture
+## Microservices Architecture
 
-#### API Gateway Pattern
+### API Gateway Pattern
 ```yaml
 # docker-compose.microservices.yml
 version: '3.8'
@@ -2278,9 +2277,9 @@ volumes:
   order_data:
 ```
 
-### CI/CD Pipeline Integration
+## CI/CD Pipeline Integration
 
-#### GitHub Actions Workflow
+### GitHub Actions Workflow
 ```yaml
 # .github/workflows/docker.yml
 name: Docker Build and Deploy
@@ -2363,9 +2362,9 @@ jobs:
           docker image prune -f
 ```
 
-### Monitoring Stack
+## Complete Monitoring Stack
 
-#### Prometheus + Grafana + AlertManager
+### Prometheus + Grafana + AlertManager
 ```yaml
 # docker-compose.monitoring.yml
 version: '3.8'
@@ -2377,6 +2376,7 @@ services:
       - "9090:9090"
     volumes:
       - ./prometheus/prometheus.yml:/etc/prometheus/prometheus.yml
+      - ./prometheus/rules:/etc/prometheus/rules
       - prometheus_data:/prometheus
     command:
       - '--config.file=/etc/prometheus/prometheus.yml'
@@ -2384,8 +2384,10 @@ services:
       - '--web.console.libraries=/etc/prometheus/console_libraries'
       - '--web.console.templates=/etc/prometheus/consoles'
       - '--web.enable-lifecycle'
+      - '--storage.tsdb.retention.time=30d'
     networks:
       - monitoring
+    restart: unless-stopped
 
   grafana:
     image: grafana/grafana:latest
@@ -2393,11 +2395,15 @@ services:
       - "3000:3000"
     environment:
       - GF_SECURITY_ADMIN_PASSWORD=admin
+      - GF_USERS_ALLOW_SIGN_UP=false
+      - GF_INSTALL_PLUGINS=grafana-clock-panel,grafana-simple-json-datasource
     volumes:
       - grafana_data:/var/lib/grafana
       - ./grafana/provisioning:/etc/grafana/provisioning
+      - ./grafana/dashboards:/var/lib/grafana/dashboards
     networks:
       - monitoring
+    restart: unless-stopped
 
   alertmanager:
     image: prom/alertmanager:latest
@@ -2405,8 +2411,14 @@ services:
       - "9093:9093"
     volumes:
       - ./alertmanager/alertmanager.yml:/etc/alertmanager/alertmanager.yml
+      - alertmanager_data:/alertmanager
+    command:
+      - '--config.file=/etc/alertmanager/alertmanager.yml'
+      - '--storage.path=/alertmanager'
+      - '--web.external-url=http://localhost:9093'
     networks:
       - monitoring
+    restart: unless-stopped
 
   node-exporter:
     image: prom/node-exporter:latest
@@ -2422,8 +2434,290 @@ services:
       - '--collector.filesystem.ignored-mount-points=^/(sys|proc|dev|host|etc)($|/)'
     networks:
       - monitoring
+    restart: unless-stopped
 
   cadvisor:
     image: gcr.io/cadvisor/cadvisor:latest
     ports:
-      - "8080:
+      - "8080:8080"
+    volumes:
+      - /:/rootfs:ro
+      - /var/run:/var/run:rw
+      - /sys:/sys:ro
+      - /var/lib/docker/:/var/lib/docker:ro
+      - /dev/disk/:/dev/disk:ro
+    privileged: true
+    devices:
+      - /dev/kmsg
+    networks:
+      - monitoring
+    restart: unless-stopped
+
+  loki:
+    image: grafana/loki:latest
+    ports:
+      - "3100:3100"
+    volumes:
+      - ./loki/loki.yml:/etc/loki/local-config.yaml
+      - loki_data:/loki
+    command: -config.file=/etc/loki/local-config.yaml
+    networks:
+      - monitoring
+    restart: unless-stopped
+
+  promtail:
+    image: grafana/promtail:latest
+    volumes:
+      - ./promtail/promtail.yml:/etc/promtail/config.yml
+      - /var/log:/var/log:ro
+      - /var/lib/docker/containers:/var/lib/docker/containers:ro
+    command: -config.file=/etc/promtail/config.yml
+    networks:
+      - monitoring
+    restart: unless-stopped
+
+  jaeger:
+    image: jaegertracing/all-in-one:latest
+    ports:
+      - "16686:16686"
+      - "14268:14268"
+    environment:
+      - COLLECTOR_OTLP_ENABLED=true
+    networks:
+      - monitoring
+    restart: unless-stopped
+
+networks:
+  monitoring:
+    driver: bridge
+
+volumes:
+  prometheus_data:
+  grafana_data:
+  alertmanager_data:
+  loki_data:
+```
+
+## ELK Stack (Elasticsearch, Logstash, Kibana)
+
+```yaml
+# docker-compose.elk.yml
+version: '3.8'
+
+services:
+  elasticsearch:
+    image: docker.elastic.co/elasticsearch/elasticsearch:8.8.0
+    environment:
+      - node.name=elasticsearch
+      - cluster.name=docker-cluster
+      - discovery.type=single-node
+      - bootstrap.memory_lock=true
+      - "ES_JAVA_OPTS=-Xms512m -Xmx512m"
+      - xpack.security.enabled=false
+    ulimits:
+      memlock:
+        soft: -1
+        hard: -1
+    volumes:
+      - elasticsearch_data:/usr/share/elasticsearch/data
+    ports:
+      - "9200:9200"
+    networks:
+      - elk
+    restart: unless-stopped
+
+  logstash:
+    image: docker.elastic.co/logstash/logstash:8.8.0
+    volumes:
+      - ./logstash/config/logstash.yml:/usr/share/logstash/config/logstash.yml
+      - ./logstash/pipeline:/usr/share/logstash/pipeline
+    ports:
+      - "5044:5044"
+      - "5000:5000/tcp"
+      - "5000:5000/udp"
+      - "9600:9600"
+    environment:
+      LS_JAVA_OPTS: "-Xmx256m -Xms256m"
+    networks:
+      - elk
+    depends_on:
+      - elasticsearch
+    restart: unless-stopped
+
+  kibana:
+    image: docker.elastic.co/kibana/kibana:8.8.0
+    ports:
+      - "5601:5601"
+    environment:
+      ELASTICSEARCH_URL: http://elasticsearch:9200
+      ELASTICSEARCH_HOSTS: '["http://elasticsearch:9200"]'
+    networks:
+      - elk
+    depends_on:
+      - elasticsearch
+    restart: unless-stopped
+
+  filebeat:
+    image: docker.elastic.co/beats/filebeat:8.8.0
+    user: root
+    volumes:
+      - ./filebeat/filebeat.yml:/usr/share/filebeat/filebeat.yml:ro
+      - /var/lib/docker/containers:/var/lib/docker/containers:ro
+      - /var/run/docker.sock:/var/run/docker.sock:ro
+    networks:
+      - elk
+    depends_on:
+      - elasticsearch
+      - logstash
+    restart: unless-stopped
+
+networks:
+  elk:
+    driver: bridge
+
+volumes:
+  elasticsearch_data:
+```
+
+## WordPress with MySQL
+
+```yaml
+# docker-compose.wordpress.yml
+version: '3.8'
+
+services:
+  wordpress:
+    image: wordpress:latest
+    ports:
+      - "8000:80"
+    environment:
+      WORDPRESS_DB_HOST: mysql
+      WORDPRESS_DB_USER: wordpress
+      WORDPRESS_DB_PASSWORD: ${MYSQL_PASSWORD:-password}
+      WORDPRESS_DB_NAME: wordpress
+    volumes:
+      - wordpress_data:/var/www/html
+      - ./uploads.ini:/usr/local/etc/php/conf.d/uploads.ini
+    depends_on:
+      mysql:
+        condition: service_healthy
+    networks:
+      - wordpress
+    restart: unless-stopped
+
+  mysql:
+    image: mysql:8.0
+    environment:
+      MYSQL_DATABASE: wordpress
+      MYSQL_USER: wordpress
+      MYSQL_PASSWORD: ${MYSQL_PASSWORD:-password}
+      MYSQL_ROOT_PASSWORD: ${MYSQL_ROOT_PASSWORD:-rootpassword}
+    volumes:
+      - mysql_data:/var/lib/mysql
+    networks:
+      - wordpress
+    restart: unless-stopped
+    healthcheck:
+      test: ["CMD", "mysqladmin", "ping", "-h", "localhost"]
+      timeout: 20s
+      retries: 10
+
+  phpmyadmin:
+    image: phpmyadmin:latest
+    ports:
+      - "8080:80"
+    environment:
+      PMA_HOST: mysql
+      PMA_PORT: 3306
+      MYSQL_ROOT_PASSWORD: ${MYSQL_ROOT_PASSWORD:-rootpassword}
+    depends_on:
+      - mysql
+    networks:
+      - wordpress
+    restart: unless-stopped
+
+networks:
+  wordpress:
+    driver: bridge
+
+volumes:
+  wordpress_data:
+  mysql_data:
+```
+
+## Environment Configuration
+
+### .env File Example
+```env
+# Database Configuration
+MONGO_ROOT_USER=admin
+MONGO_ROOT_PASSWORD=securepassword123
+REDIS_PASSWORD=redispassword123
+
+# Application Ports
+FRONTEND_PORT=80
+BACKEND_PORT=3000
+NGINX_PORT=8080
+
+# Environment
+NODE_ENV=production
+
+# MySQL (for WordPress)
+MYSQL_PASSWORD=wordpresspass
+MYSQL_ROOT_PASSWORD=rootpass123
+
+# Monitoring
+GRAFANA_ADMIN_PASSWORD=grafana_admin_pass
+```
+
+## Useful Commands
+
+### Development Commands
+```bash
+# Start all services
+docker-compose up -d
+
+# Start with build
+docker-compose up --build -d
+
+# View logs
+docker-compose logs -f [service_name]
+
+# Scale services
+docker-compose up -d --scale backend=3
+
+# Stop all services
+docker-compose down
+
+# Stop and remove volumes
+docker-compose down -v
+```
+
+### Production Commands
+```bash
+# Production deployment
+docker-compose -f docker-compose.yml -f docker-compose.prod.yml up -d
+
+# Update services
+docker-compose pull && docker-compose up -d
+
+# Backup volumes
+docker run --rm -v project_mongo_data:/data -v $(pwd):/backup ubuntu tar czf /backup/mongo_backup.tar.gz -C /data .
+```
+
+### Monitoring Commands
+```bash
+# Start monitoring stack
+docker-compose -f docker-compose.monitoring.yml up -d
+
+# Check service health
+docker-compose ps
+
+# Resource usage
+docker stats
+
+# System cleanup
+docker system prune -a
+```
+
+This comprehensive guide provides complete Docker Compose configurations for various scenarios including full-stack applications, microservices, monitoring, logging, and CMS solutions. Each configuration includes proper networking, volumes, health checks, and production-ready settings.
